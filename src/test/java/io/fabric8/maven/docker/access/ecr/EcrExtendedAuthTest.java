@@ -1,22 +1,13 @@
 package io.fabric8.maven.docker.access.ecr;
 
-import static org.junit.Assert.*;
-
-import org.junit.Test;
+import java.io.IOException;
+import java.util.Date;
 
 import io.fabric8.maven.docker.access.AuthConfig;
 import io.fabric8.maven.docker.util.Logger;
 import mockit.Expectations;
 import mockit.Mocked;
 import mockit.Verifications;
-
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.assertEquals;
-
-import java.io.IOException;
-import java.util.Date;
-
 import org.apache.http.HttpEntity;
 import org.apache.http.StatusLine;
 import org.apache.http.client.methods.CloseableHttpResponse;
@@ -24,6 +15,9 @@ import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.maven.plugin.MojoExecutionException;
+import org.junit.Test;
+
+import static org.junit.Assert.*;
 
 public class EcrExtendedAuthTest {
 
@@ -32,12 +26,12 @@ public class EcrExtendedAuthTest {
 
     @Test
     public void testIsNotAws() {
-        assertFalse(new EcrExtendedAuth(logger, "jolokia").isValidRegistry());
+        assertFalse(new EcrExtendedAuth(logger, "jolokia").isAwsRegistry());
     }
 
     @Test
     public void testIsAws() {
-        assertTrue(new EcrExtendedAuth(logger, "123456789012.dkr.ecr.eu-west-1.amazonaws.com").isValidRegistry());
+        assertTrue(new EcrExtendedAuth(logger, "123456789012.dkr.ecr.eu-west-1.amazonaws.com").isAwsRegistry());
     }
 
     @Test

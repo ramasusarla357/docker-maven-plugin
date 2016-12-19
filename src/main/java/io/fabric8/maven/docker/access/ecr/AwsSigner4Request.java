@@ -5,12 +5,9 @@ import java.lang.reflect.UndeclaredThrowableException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.Locale;
-import java.util.Map;
-import java.util.TimeZone;
-import java.util.TreeMap;
+import java.util.*;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.http.Header;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpRequest;
@@ -58,11 +55,10 @@ public class AwsSigner4Request {
         method = request.getRequestLine().getMethod();
         uri = getUri(request);
 
-        StringBuilder canonical = new StringBuilder();
-        StringBuilder signed = new StringBuilder();
-        canonicalizeHeaders(request, canonical, signed);
-        canonicalHeaders = canonical.toString();
-        signedHeaders = signed.toString();
+
+        String[] headers  = canonicalizeHeaders(request);
+        canonicalHeaders = headers[0];
+        signedHeaders = headers[1];
     }
 
     public String getRegion() {
@@ -149,68 +145,37 @@ public class AwsSigner4Request {
         }
     }
 
-    private static void canonicalizeHeaders(HttpRequest request, StringBuilder canonical, StringBuilder signed) {
-        Map<String, StringBuilder> unique = new TreeMap<>();
+    private static String[] canonicalizeHeaders(HttpRequest request) {
+        Map<String, List<String>> unique = new TreeMap<>();
         for (Header header : request.getAllHeaders()) {
             String key = header.getName().toLowerCase(Locale.US);
             if (key.equals("connection")) {
                 continue;
             }
-            StringBuilder builder = unique.get(key);
-            if (builder != null) {
-                if (builder.length() > 0) {
-                    builder.append(',');
-                }
-            } else {
-                builder = new StringBuilder();
-                unique.put(key, builder);
-            }
             String value = header.getValue();
             if (value != null) {
-                builder.append(value);
+                List<String> values = unique.get(key);
+                if (values == null) {
+                    values = new ArrayList<>();
+                    unique.put(key, values);
+                }
+                values.add(value);
             }
         }
 
-        for (Map.Entry<String, StringBuilder> header : unique.entrySet()) {
-            if (signed.length() > 0) {
-                signed.append(';');
-            }
-            signed.append(header.getKey());
-
-            squeezeWhite(canonical, header.getKey());
+        StringBuilder canonical = new StringBuilder();
+        for (Map.Entry<String, List<String>> header : unique.entrySet()) {
+            // HTTP Header names never contain white-space
+            canonical.append(header.getKey());
             canonical.append(':');
-            squeezeWhite(canonical, header.getValue().toString());
+            canonical.append(StringUtils.join(header.getValue(), ",").replaceAll("\\s+", " ").trim());
             canonical.append('\n');
         }
-    }
-
-    private static void squeezeWhite(StringBuilder dst, String src) {
-        int l = src.length();
-        while (l > 0) {
-            char ch = src.charAt(--l);
-            if (!Character.isWhitespace(ch)) {
-                break;
-            }
-        }
-
-        boolean wasWhite = true;
-        for (int i = 0; i <= l; ++i) {
-            char ch = src.charAt(i);
-            boolean isWhite = Character.isWhitespace(ch);
-            if (isWhite) {
-                if (wasWhite) {
-                    continue;
-                }
-                dst.append(' ');
-            } else {
-                dst.append(ch);
-            }
-            wasWhite = isWhite;
-        }
+        return new String[] { canonical.toString(), StringUtils.join(unique.keySet(),";") };
     }
 
     byte[] getBytes() {
-        if(request instanceof HttpEntityEnclosingRequestBase) {
+        if (request instanceof HttpEntityEnclosingRequestBase) {
             try {
                 HttpEntity entity = ((HttpEntityEnclosingRequestBase)request).getEntity();
                 return EntityUtils.toByteArray(entity);

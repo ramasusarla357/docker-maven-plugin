@@ -2,6 +2,12 @@ package io.fabric8.maven.docker.util;
 
 import mockit.*;
 import mockit.integration.junit4.JMockit;
+import org.apache.http.HttpEntity;
+import org.apache.http.StatusLine;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpUriRequest;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.settings.Server;
 import org.apache.maven.settings.Settings;
@@ -17,10 +23,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.sonatype.plexus.components.sec.dispatcher.SecDispatcher;
 
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.Writer;
+import java.io.*;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -34,8 +37,9 @@ import static org.junit.Assert.*;
  * @since 29.07.14
  */
 @RunWith(JMockit.class)
-public class AuthConfigHandlerTest {
+public class AuthConfigFactoryTest {
 
+    public static final String ECR_NAME = "123456789012.dkr.ecr.bla.amazonaws.com";
     @Mocked
     Settings settings;
 
@@ -69,7 +73,7 @@ public class AuthConfigHandlerTest {
 
     @Test
     public void testEmpty() throws Exception {
-        assertNull(factory.createAuthConfig(isPush, null, settings, null, "blubberbla:1611"));
+        assertNull(factory.createAuthConfig(isPush, false, null, settings, null, "blubberbla:1611"));
     }
 
     @Test
@@ -78,7 +82,7 @@ public class AuthConfigHandlerTest {
         System.setProperty("docker.push.password", "secret");
         System.setProperty("docker.push.email", "roland@jolokia.org");
         try {
-            AuthConfig config = factory.createAuthConfig(true, null, settings, null, null);
+            AuthConfig config = factory.createAuthConfig(true, false, null, settings, null, null);
             verifyAuthConfig(config,"roland","secret","roland@jolokia.org");
         } finally {
             System.clearProperty("docker.push.username");
@@ -101,11 +105,36 @@ public class AuthConfigHandlerTest {
     }
 
     @Test
+    public void testEcrLogin(
+        @Mocked final CloseableHttpClient httpClient,
+        @Mocked final CloseableHttpResponse response,
+        @Mocked final StatusLine statusLine,
+        @Mocked final HttpEntity entity) throws Exception {
+
+        setupServers();
+        final String jsonResponse = "{ authorizationData: [ { authorizationToken: '" + new String(Base64.encodeBase64("bla:blub".getBytes())) + "'}] }";
+
+        new Expectations() {{
+            httpClient.execute((HttpUriRequest) any);
+            response.getStatusLine();
+            statusLine.getStatusCode(); result = 200;
+            response.getEntity();
+            entity.getContent();
+            result = new ByteArrayInputStream(jsonResponse.getBytes());
+        }};
+        AuthConfig config = factory.createAuthConfig(true, false, null, settings, "roland", ECR_NAME);
+        assertNotNull(config);
+        assertEquals("bla",config.getUsername());
+        assertEquals("blub",config.getPassword());
+
+    }
+
+    @Test
     public void testDockerLoginNoConfig() throws MojoExecutionException, IOException {
         executeWithTempHomeDir(new HomeDirExecutor() {
             @Override
             public void exec(File dir) throws IOException, MojoExecutionException {
-                AuthConfig config = factory.createAuthConfig(isPush, null, settings, "roland", null);
+                AuthConfig config = factory.createAuthConfig(isPush, false, null, settings, "roland", null);
                 assertNull(config);
             }
         });
@@ -164,7 +193,7 @@ public class AuthConfigHandlerTest {
                 createOpenShiftConfig(homeDir,"openshift_simple_config.yaml");
                 Map<String,String> authConfigMap = new HashMap<>();
                 authConfigMap.put("useOpenShiftAuth","true");
-                AuthConfig config = factory.createAuthConfig(isPush, authConfigMap, settings, "roland", null);
+                AuthConfig config = factory.createAuthConfig(isPush, false, authConfigMap, settings, "roland", null);
                 verifyAuthConfig(config,"admin","token123",null);
             }
         });
@@ -178,7 +207,7 @@ public class AuthConfigHandlerTest {
                 @Override
                 public void exec(File homeDir) throws IOException, MojoExecutionException {
                     createOpenShiftConfig(homeDir, "openshift_simple_config.yaml");
-                    AuthConfig config = factory.createAuthConfig(isPush, null, settings, "roland", null);
+                    AuthConfig config = factory.createAuthConfig(isPush, false, null, settings, "roland", null);
                     verifyAuthConfig(config, "admin", "token123", null);
                 }
             });
@@ -197,7 +226,7 @@ public class AuthConfigHandlerTest {
                     createOpenShiftConfig(homeDir, "openshift_simple_config.yaml");
                     Map<String,String> authConfigMap = new HashMap<>();
                     authConfigMap.put("useOpenShiftAuth","true");
-                    AuthConfig config = factory.createAuthConfig(isPush, authConfigMap, settings, "roland", null);
+                    AuthConfig config = factory.createAuthConfig(isPush, false, authConfigMap, settings, "roland", null);
                     assertNull(config);
                 }
             });
@@ -214,7 +243,7 @@ public class AuthConfigHandlerTest {
                 createOpenShiftConfig(homeDir,"openshift_nologin_config.yaml");
                 Map<String,String> authConfigMap = new HashMap<>();
                 authConfigMap.put("useOpenShiftAuth","true");
-                AuthConfig config = factory.createAuthConfig(isPush, authConfigMap, settings, "roland", null);
+                AuthConfig config = factory.createAuthConfig(isPush, false, authConfigMap, settings, "roland", null);
             }
         });
 
@@ -235,7 +264,7 @@ public class AuthConfigHandlerTest {
     private void checkException(String key) throws MojoExecutionException {
         System.setProperty(key, "secret");
         try {
-            factory.createAuthConfig(isPush, null, settings, null, null);
+            factory.createAuthConfig(isPush, false, null, settings, null, null);
         } finally {
             System.clearProperty(key);
         }
@@ -248,7 +277,7 @@ public class AuthConfigHandlerTest {
         pluginConfig.put("password", "secret");
         pluginConfig.put("email", "roland@jolokia.org");
 
-        AuthConfig config = factory.createAuthConfig(isPush, pluginConfig, settings, null, null);
+        AuthConfig config = factory.createAuthConfig(isPush, false, pluginConfig, settings, null, null);
         verifyAuthConfig(config, "roland", "secret", "roland@jolokia.org");
     }
 
@@ -260,7 +289,7 @@ public class AuthConfigHandlerTest {
         pullConfig.put("email", "roland@jolokia.org");
         Map pluginConfig = new HashMap();
         pluginConfig.put("pull",pullConfig);
-        AuthConfig config = factory.createAuthConfig(false, pluginConfig, settings, null, null);
+        AuthConfig config = factory.createAuthConfig(false, false, pluginConfig, settings, null, null);
         verifyAuthConfig(config, "roland", "secret", "roland@jolokia.org");
     }
 
@@ -269,13 +298,13 @@ public class AuthConfigHandlerTest {
     public void testFromPluginConfigurationFailed() throws MojoExecutionException {
         Map pluginConfig = new HashMap();
         pluginConfig.put("username", "admin");
-        factory.createAuthConfig(isPush, pluginConfig, settings, null, null);
+        factory.createAuthConfig(isPush, false, pluginConfig, settings, null, null);
     }
 
     @Test
     public void testFromSettingsSimple() throws MojoExecutionException {
         setupServers();
-        AuthConfig config = factory.createAuthConfig(isPush, null, settings, "roland", "test.org");
+        AuthConfig config = factory.createAuthConfig(isPush, false, null, settings, "roland", "test.org");
         assertNotNull(config);
         verifyAuthConfig(config, "roland", "secret", "roland@jolokia.org");
     }
@@ -283,7 +312,7 @@ public class AuthConfigHandlerTest {
     @Test
     public void testFromSettingsDefault() throws MojoExecutionException {
         setupServers();
-        AuthConfig config = factory.createAuthConfig(isPush, null, settings, "fabric8io", "test.org");
+        AuthConfig config = factory.createAuthConfig(isPush, false, null, settings, "fabric8io", "test.org");
         assertNotNull(config);
         verifyAuthConfig(config, "fabric8io", "secret2", "fabric8io@redhat.com");
     }
@@ -291,7 +320,7 @@ public class AuthConfigHandlerTest {
     @Test
     public void testFromSettingsDefault2() throws MojoExecutionException {
         setupServers();
-        AuthConfig config = factory.createAuthConfig(isPush, null, settings, "tanja", null);
+        AuthConfig config = factory.createAuthConfig(isPush, false, null, settings, "tanja", null);
         assertNotNull(config);
         verifyAuthConfig(config,"tanja","doublesecret","tanja@jolokia.org");
     }
@@ -299,21 +328,23 @@ public class AuthConfigHandlerTest {
     @Test
     public void testWrongUserName() throws MojoExecutionException {
         setupServers();
-        assertNull(factory.createAuthConfig(isPush, null, settings, "roland", "another.repo.org"));
+        assertNull(factory.createAuthConfig(isPush, false, null, settings, "roland", "another.repo.org"));
     }
 
 
     private void setupServers() {
-        new Expectations() {{
-            List<Server> servers = new ArrayList<>();
+        new Expectations() {
+            {
+                List<Server> servers = new ArrayList<>();
 
-            servers.add(create("test.org", "fabric8io", "secret2", "fabric8io@redhat.com"));
-            servers.add(create("test.org/roland", "roland", "secret", "roland@jolokia.org"));
-            servers.add(create("docker.io", "tanja", "doublesecret", "tanja@jolokia.org"));
-            servers.add(create("another.repo.org/joe", "joe", "3secret", "joe@foobar.com"));
-            settings.getServers();
-            result = servers;
-        }
+                servers.add(create(ECR_NAME, "roland", "secret", "roland@jolokia.org"));
+                servers.add(create("test.org", "fabric8io", "secret2", "fabric8io@redhat.com"));
+                servers.add(create("test.org/roland", "roland", "secret", "roland@jolokia.org"));
+                servers.add(create("docker.io", "tanja", "doublesecret", "tanja@jolokia.org"));
+                servers.add(create("another.repo.org/joe", "joe", "3secret", "joe@foobar.com"));
+                settings.getServers();
+                result = servers;
+            }
 
             private Server create(String id, String user, String password, String email) {
                 Server server = new Server();
